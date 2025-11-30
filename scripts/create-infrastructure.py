@@ -7,13 +7,25 @@ Creates AWS resources not yet supported by tc-functors:
 - S3 buckets for uploads and generated avatars
 - API key in Secrets Manager
 
-Requirements: 12.1, 12.2, 12.5
+Requirements: 12.1, 12.2, 12.5, 6.6
 """
 import boto3
 import json
 import secrets
 import sys
+import os
 from typing import Dict, Any
+
+# Add src to path for imports
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from src.security import (
+    S3SecurityConfig,
+    configure_bucket_security,
+    verify_bucket_security,
+    DynamoDBSecurityConfig,
+    configure_table_security,
+    verify_table_security
+)
 
 
 def get_account_id() -> str:
@@ -54,19 +66,34 @@ def create_dynamodb_table(table_name: str = 'petavatar-jobs') -> Dict[str, Any]:
         waiter = dynamodb.get_waiter('table_exists')
         waiter.wait(TableName=table_name)
         
-        # Enable TTL for automatic cleanup
-        dynamodb.update_time_to_live(
-            TableName=table_name,
-            TimeToLiveSpecification={
-                'Enabled': True,
-                'AttributeName': 'ttl'
-            }
+        # Apply security configuration using the security module
+        # Requirements: 12.2 (encryption, TTL, least privilege)
+        security_config = DynamoDBSecurityConfig(
+            sse_enabled=True,
+            sse_type='KMS',
+            ttl_enabled=True,
+            ttl_attribute_name='ttl',
+            pitr_enabled=True,
+            deletion_protection_enabled=False  # Enable in production
         )
         
-        print(f"✓ Created DynamoDB table: {table_name}")
+        configure_table_security(table_name, security_config, dynamodb)
+        
+        # Verify security configuration
+        verification = verify_table_security(table_name, dynamodb)
+        if verification['compliant']:
+            print(f"✓ Created DynamoDB table with security: {table_name}")
+        else:
+            print(f"⚠ DynamoDB table created but has issues: {verification['issues']}")
+        
         return response
     except dynamodb.exceptions.ResourceInUseException:
         print(f"✓ DynamoDB table already exists: {table_name}")
+        # Verify existing table security
+        verification = verify_table_security(table_name, dynamodb)
+        if not verification['compliant']:
+            print(f"  ⚠ Applying security configuration...")
+            configure_table_security(table_name, DynamoDBSecurityConfig(), dynamodb)
         return {'TableName': table_name}
 
 
@@ -89,48 +116,20 @@ def create_s3_bucket(bucket_name: str) -> Dict[str, Any]:
                 CreateBucketConfiguration={'LocationConstraint': region}
             )
         
-        # Enable encryption at rest (AES-256)
-        s3.put_bucket_encryption(
-            Bucket=bucket_name,
-            ServerSideEncryptionConfiguration={
-                'Rules': [{
-                    'ApplyServerSideEncryptionByDefault': {
-                        'SSEAlgorithm': 'AES256'
-                    },
-                    'BucketKeyEnabled': True
-                }]
-            }
+        # Apply security configuration using the security module
+        # Requirements: 12.1 (encryption), 12.2 (lifecycle), 12.5 (public access block)
+        security_config = S3SecurityConfig(
+            encryption_algorithm='AES256',
+            bucket_key_enabled=True,
+            block_public_acls=True,
+            ignore_public_acls=True,
+            block_public_policy=True,
+            restrict_public_buckets=True,
+            expiration_days=7,
+            versioning_enabled=True
         )
         
-        # Block all public access
-        s3.put_public_access_block(
-            Bucket=bucket_name,
-            PublicAccessBlockConfiguration={
-                'BlockPublicAcls': True,
-                'IgnorePublicAcls': True,
-                'BlockPublicPolicy': True,
-                'RestrictPublicBuckets': True
-            }
-        )
-        
-        # Configure lifecycle policy for 7-day expiration
-        s3.put_bucket_lifecycle_configuration(
-            Bucket=bucket_name,
-            LifecycleConfiguration={
-                'Rules': [{
-                    'Id': 'DeleteAfter7Days',
-                    'Status': 'Enabled',
-                    'Expiration': {'Days': 7},
-                    'Filter': {'Prefix': ''}
-                }]
-            }
-        )
-        
-        # Enable versioning for data protection
-        s3.put_bucket_versioning(
-            Bucket=bucket_name,
-            VersioningConfiguration={'Status': 'Enabled'}
-        )
+        configure_bucket_security(bucket_name, security_config, s3)
         
         # Add bucket tags
         s3.put_bucket_tagging(
@@ -143,10 +142,21 @@ def create_s3_bucket(bucket_name: str) -> Dict[str, Any]:
             }
         )
         
-        print(f"✓ Created S3 bucket: {bucket_name}")
+        # Verify security configuration
+        verification = verify_bucket_security(bucket_name, s3)
+        if verification['compliant']:
+            print(f"✓ Created S3 bucket with security: {bucket_name}")
+        else:
+            print(f"⚠ S3 bucket created but has issues: {verification['issues']}")
+        
         return response
     except s3.exceptions.BucketAlreadyOwnedByYou:
         print(f"✓ S3 bucket already exists: {bucket_name}")
+        # Verify existing bucket security
+        verification = verify_bucket_security(bucket_name, s3)
+        if not verification['compliant']:
+            print(f"  ⚠ Applying security configuration...")
+            configure_bucket_security(bucket_name, S3SecurityConfig(), s3)
         return {'Bucket': bucket_name}
     except s3.exceptions.BucketAlreadyExists:
         print(f"✗ S3 bucket name already taken: {bucket_name}")

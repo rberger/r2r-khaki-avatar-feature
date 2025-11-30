@@ -1,5 +1,7 @@
 name: petavatar
 
+# API Gateway configuration
+# Requirements: 6.6 (API key validation, CORS, throttling)
 routes:
   /presigned-url:
     method: GET
@@ -7,7 +9,13 @@ routes:
     cors:
       methods: ['GET', 'OPTIONS']
       origins: ['*']
-      allowed_headers: ['Content-Type', 'x-api-key']
+      allowed_headers: ['Content-Type', 'x-api-key', 'Authorization']
+      expose_headers: ['x-request-id']
+      max_age: 86400  # 24 hours
+    # Throttling: 100 requests per second, burst of 200
+    throttle:
+      rate_limit: 100
+      burst_limit: 200
   
   /process:
     method: POST
@@ -15,7 +23,13 @@ routes:
     cors:
       methods: ['POST', 'OPTIONS']
       origins: ['*']
-      allowed_headers: ['Content-Type', 'x-api-key']
+      allowed_headers: ['Content-Type', 'x-api-key', 'Authorization']
+      expose_headers: ['x-request-id']
+      max_age: 86400
+    # Lower throttle for processing endpoint
+    throttle:
+      rate_limit: 50
+      burst_limit: 100
   
   /status/{job_id}:
     method: GET
@@ -23,7 +37,12 @@ routes:
     cors:
       methods: ['GET', 'OPTIONS']
       origins: ['*']
-      allowed_headers: ['x-api-key']
+      allowed_headers: ['Content-Type', 'x-api-key', 'Authorization']
+      expose_headers: ['x-request-id']
+      max_age: 86400
+    throttle:
+      rate_limit: 200
+      burst_limit: 400
   
   /results/{job_id}:
     method: GET
@@ -31,34 +50,46 @@ routes:
     cors:
       methods: ['GET', 'OPTIONS']
       origins: ['*']
-      allowed_headers: ['x-api-key']
+      allowed_headers: ['Content-Type', 'x-api-key', 'Authorization']
+      expose_headers: ['x-request-id']
+      max_age: 86400
+    throttle:
+      rate_limit: 100
+      burst_limit: 200
 
 functions:
   presigned-url-handler:
     # Generates presigned S3 URLs for direct uploads
-    runtime: python3.13
+    runtime:
+      lang: python3.13
   
   process-handler:
     # Validates S3 URI and initiates processing
-    runtime: python3.13
+    runtime:
+      lang: python3.13
     queue: processing-queue
   
   s3-event-handler:
     # Handles S3 upload events (configured via S3 event notifications)
-    runtime: python3.13
+    runtime:
+      lang: python3.13
     queue: processing-queue
   
   status-handler:
     # Returns job status from DynamoDB
-    runtime: python3.13
+    runtime:
+      lang: python3.13
   
   result-handler:
     # Returns completed results with presigned URLs
-    runtime: python3.13
+    runtime:
+      lang: python3.13
   
   process-worker:
     # Orchestrates avatar generation via Strands Agent
-    runtime: python3.13
+    runtime:
+      lang: python3.13
+      role_file: scripts/iam-policies/petavatar-lambda-policy.json
     timeout: 900  # 15 minutes for long-running AI operations
 
 queues:
