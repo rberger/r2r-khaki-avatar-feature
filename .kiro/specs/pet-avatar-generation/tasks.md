@@ -291,5 +291,5 @@
   - Verify IAM role permissions
   - _Requirements: 12.1, 12.2, 12.3, 12.5, 6.6_
 
-- [-] 10. Final Checkpoint - Make sure all tests are passing
+- [x] 10. Final Checkpoint - Make sure all tests are passing
   - Ensure all tests pass, ask the user if questions arise.

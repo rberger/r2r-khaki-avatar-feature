@@ -49,6 +49,7 @@ cdk.out/
 # Environment variables
 .env
 .env.local
+.env.petavatar
 
 # Logs
 *.log
